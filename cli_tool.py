@@ -1,12 +1,14 @@
 import subprocess as sp
 import os
 import re
+from sortedcontainers import SortedList #sophisticated block-based data structure that's extremely fast in Python.
 from rich.console import Console
 from rich.table import Table
 from rich.progress import track
 from rich.panel import Panel
 
 console = Console()
+sl = SortedList()
 
 def unify_pkg_names(pkg_list):
     # Original logic preserved
@@ -71,11 +73,16 @@ def main():
 
                 # Clean up path for display
                 display_path = venv_path.replace(os.path.expanduser("~"), "~").replace("/pyvenv.cfg", "")
-                table.add_row(display_path, version, str(env_size))
+                sl.add((env_size, version, display_path))
+                # table.add_row(display_path, version, str(env_size))
             except FileNotFoundError:
                 # Silently skip if the lib folder structure is non-standard
                 pass
-
+    
+    #Add rows to table from sl
+    for i in sl:
+        table.add_row(i[2], i[1], str(i[0]))
+    
     # Print the table and the final total
     console.print(table)
     console.print(f"\n[bold yellow]Total storage consumed by virtual environments: {total_size} MB[/bold yellow]")
