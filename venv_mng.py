@@ -42,8 +42,10 @@ for venv_path in l:
     if version_match:
         
         #Get the packages list from ./lib/pythonX.X/site-packages
+        full_ver = version_match.group(1)
+        second_dot_pos = full_ver.find(".",2)
         
-        site_packages_path = f"{venv_path[:-11]}/lib/python{version_match.group(1)[:4]}/site-packages"
+        site_packages_path = f"{venv_path[:-11]}/lib/python{version_match.group(1)[:second_dot_pos]}/site-packages"
         print(site_packages_path)
 
 
@@ -64,6 +66,7 @@ for venv_path in l:
         size = sp.run(["du","-shm", site_packages_path], stdout=sp.PIPE, stderr=sp.DEVNULL, text=True)
         print("Total size of installed packages and tools: ",size.stdout.split("\t")[0])
         total_size += int(size.stdout.split("\t")[0])
+        break
     f.close()
 
 print(f"Total size of all virtual environments: {total_size} MB")
