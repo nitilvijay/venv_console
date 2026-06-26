@@ -49,11 +49,17 @@ def main():
     for venv_path in track(l, description="Analyzing packages and sizes..."):
         with open(venv_path, "r") as f:
             content = f.read()
+        
+        rm_pycnf = venv_path.rfind("/")
 
         version_match = re.search(r"version = (\d+\.\d+\.\d+)", content)
         if version_match:
+            
             version = version_match.group(1)
-            site_packages_path = f"{venv_path[:-11]}/lib/python{version[:4]}/site-packages"
+            full_ver = version_match.group(1)
+            second_dot_pos = full_ver.find(".",2)
+            
+            site_packages_path = f"{venv_path[:rm_pycnf]}/lib/python{version_match.group(1)[:second_dot_pos]}/site-packages"
 
             try:
                 packages = os.listdir(site_packages_path)
