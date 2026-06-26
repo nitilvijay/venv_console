@@ -6,9 +6,55 @@ from rich.console import Console
 from rich.table import Table
 from rich.progress import track
 from rich.panel import Panel
+from textual.app import App, ComposeResult
+from textual.widgets import DataTable
+from textual.containers import Horizontal
 
 console = Console()
 sl = SortedList()
+
+class EnvTable(App):
+    def __init__(self, rows):
+        super().__init__()
+        self.rows = rows
+
+    def compose(self) -> ComposeResult:
+        with Horizontal():
+            yield DataTable(id="envs")
+            yield DataTable(id="packages")
+
+    def on_mount(self):
+        env_table = self.query_one("#envs", DataTable)
+        pkg_table = self.query_one("#packages", DataTable)
+
+        env_table.add_columns(
+            "Environment Path",
+            "Python Version",
+            "Size (MB)"
+        )
+        pkg_table.add_column("Installed Packages")
+        
+        for row in self.rows:
+            env_table.add_row(row[2], row[1], str(row[0]))
+
+        env_table.focus()          # VERY IMPORTANT
+
+    def show_packages(self, row_index):
+
+        pkg_table = self.query_one("#packages", DataTable)
+
+        pkg_table.clear()
+
+        packages = sorted(self.rows[row_index][3])
+
+        for package in packages:
+            pkg_table.add_row(package)
+            
+    def on_key(self, event):
+
+        table = self.query_one("#envs", DataTable)
+
+        self.show_packages(table.cursor_row)
 
 def unify_pkg_names(pkg_list):
     # Original logic preserved
@@ -39,12 +85,6 @@ def main():
         console.print("[bold red]No virtual environments found.[/bold red]")
         return
 
-    # Initialize a beautiful terminal table
-    table = Table(show_header=True, header_style="bold magenta")
-    table.add_column("Environment Path", style="dim", overflow="fold")
-    table.add_column("Python Version", justify="center")
-    table.add_column("Size (MB)", justify="right", style="green")
-
     total_size = 0
 
     # Progress bar for the analysis phase
@@ -73,18 +113,19 @@ def main():
 
                 # Clean up path for display
                 display_path = venv_path.replace(os.path.expanduser("~"), "~").replace("/pyvenv.cfg", "")
-                sl.add((env_size, version, display_path))
+                sl.add((env_size, version, display_path, unified_packages))
                 # table.add_row(display_path, version, str(env_size))
             except FileNotFoundError:
                 # Silently skip if the lib folder structure is non-standard
                 pass
     
     #Add rows to table from sl
-    for i in sl:
-        table.add_row(i[2], i[1], str(i[0]))
+    rows = list(sl)
+
+    EnvTable(rows).run()
+        
     
     # Print the table and the final total
-    console.print(table)
     console.print(f"\n[bold yellow]Total storage consumed by virtual environments: {total_size} MB[/bold yellow]")
 
 if __name__ == "__main__":
