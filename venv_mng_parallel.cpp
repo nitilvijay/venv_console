@@ -40,22 +40,30 @@ set<string> unify_pkg_names(const vector<string> &pkg_list)
     return unified_list;
 }
 
+#include <sys/stat.h>
+
 // ============================================================
-// Calculate directory size in Megabytes (MB)
+// Calculate directory disk usage in Megabytes (MB) matching `du -sm`
 // ============================================================
 
 long long get_directory_size_mb(const fs::path &dir_path)
 {
-    uintmax_t total_bytes = 0;
+    long long total_512_blocks = 0;
     try
     {
         if (fs::exists(dir_path) && fs::is_directory(dir_path))
         {
+            struct stat st;
+            if (lstat(dir_path.c_str(), &st) == 0)
+            {
+                total_512_blocks += st.st_blocks;
+            }
+
             for (const auto &entry : fs::recursive_directory_iterator(dir_path, fs::directory_options::skip_permission_denied))
             {
-                if (entry.is_regular_file() && !entry.is_symlink())
+                if (lstat(entry.path().c_str(), &st) == 0)
                 {
-                    total_bytes += entry.file_size();
+                    total_512_blocks += st.st_blocks;
                 }
             }
         }
@@ -64,7 +72,8 @@ long long get_directory_size_mb(const fs::path &dir_path)
     {
         // Skip inaccessible files or directories
     }
-    return static_cast<long long>(total_bytes / (1024 * 1024));
+    // Convert 512-byte filesystem blocks to MB (rounding up like du -sm / du -shm)
+    return (total_512_blocks * 512 + 1024 * 1024 - 1) / (1024 * 1024);
 }
 
 // ============================================================
