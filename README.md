@@ -1,15 +1,24 @@
-# Python Virtual Environment Console
+# Python Virtual Environment Manager & Scanner ⚡
 
 A high-performance tool built with C++ and OpenMP to rapidly discover Python virtual environments across your system, compute their accurate disk usage, and explore installed packages interactively.
 
 ---
 
-## Features
+## Motivation
 
-- **Blazing Fast Scanning**: Uses OpenMP task-parallelism (`#pragma omp task`) to scan the entire home directory in seconds.
-- **Accurate Disk Usage**: Calculates real filesystem block allocations (matching `du -sm` / `du -shm`).
-- **Interactive TUI**: Split-view terminal interface powered by `ncurses` showing all environments and real-time searchable package lists.
-- **Deduplication**: Unifies package distribution names (e.g. `django` vs `django-5.0.dist-info`).
+As developers, we tend to create and experiment with many main and side projects, most of which involve Python. Each project inevitably comes with its own virtual environment (`.venv`). Over time, dozens of these environments accumulate across directories, quietly consuming gigabytes of disk space unnoticed.
+
+This tool provides a centralized, fast console interface to give full visibility into all virtual environments on your drive—their true disk usage and their installed packages.
+
+---
+
+## Features & Parallel Architecture
+
+- **OpenMP Directory Traversal (`#pragma omp task`)**: Recursively searches the entire home directory tree using task parallelism to locate all `pyvenv.cfg` files within seconds.
+- **Concurrent Environment Processing (`#pragma omp parallel for`)**: Analyzes all discovered environments concurrently. Using dynamic scheduling (`schedule(dynamic)`), worker threads simultaneously inspect package directories, unify package distribution names, and compute disk usage across multiple environments in parallel.
+- **Accurate Disk Usage**: Calculates real filesystem block allocations using POSIX `st_blocks` (matching `du -sm` / `du -shm` exact disk usage).
+- **Interactive TUI**: Split-view terminal interface powered by `ncurses` featuring live package filtering, scrollable tables, and disk footprint summaries.
+- **Package Deduplication**: Intelligently unifies distribution folders (e.g. `django` vs `django-5.0.dist-info`).
 
 ---
 
