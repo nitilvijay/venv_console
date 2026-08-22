@@ -1,4 +1,4 @@
-# Python Virtual Environment Manager & Scanner ⚡
+# Python Virtual Environment Console
 
 A high-performance tool built with C++ and OpenMP to rapidly discover Python virtual environments across your system, compute their accurate disk usage, and explore installed packages interactively.
 
