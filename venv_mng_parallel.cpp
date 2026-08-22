@@ -131,10 +131,13 @@ int main()
     cout << "Virtual environments found:" << endl;
 
     long long total_size = 0;
-    regex version_regex(R"(version = (\d+\.\d+\.\d+))");
+    const regex version_regex(R"(version = (\d+\.\d+\.\d+))");
 
-    for (const auto &venv_path : venv_paths)
+    #pragma omp parallel for reduction(+:total_size) schedule(dynamic)
+    for (size_t i = 0; i < venv_paths.size(); ++i)
     {
+        const string &venv_path = venv_paths[i];
+
         ifstream f(venv_path);
         if (!f.is_open())
         {
@@ -159,8 +162,6 @@ int main()
             fs::path venv_dir = fs::path(venv_path).parent_path();
             fs::path site_packages_path = venv_dir / "lib" / ("python" + py_version_prefix) / "site-packages";
 
-            cout << site_packages_path.string() << endl;
-
             vector<string> packages;
             try
             {
@@ -180,7 +181,13 @@ int main()
             set<string> unified_packages = unify_pkg_names(packages);
 
             long long env_size = get_directory_size_mb(site_packages_path);
-            cout << "Total size of installed packages and tools: " << env_size << endl;
+
+            #pragma omp critical
+            {
+                cout << site_packages_path.string() << endl;
+                cout << "Total size of installed packages and tools: " << env_size << endl;
+            }
+
             total_size += env_size;
         }
     }
