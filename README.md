@@ -1,6 +1,20 @@
-# Python Virtual Environment Scanner
+# venvscan
 
-A high-performance tool built with C++ and OpenMP to rapidly discover Python virtual environments across your system, compute their accurate disk usage, and explore installed packages interactively.
+![License: MIT](https://img.shields.io/badge/license-MIT-blue) ![Platform: Linux](https://img.shields.io/badge/platform-linux-lightgrey) ![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C)
+
+**Find every forgotten Python virtual environment on your machine, and see how much disk it's eating.**
+
+> On my laptop: **30 venvs, 27 GB**, found and measured in **under half a second**.
+
+`venvscan` walks your home directory in parallel (C++ / OpenMP), finds every venv created with `python -m venv`, and shows its Python version, its installed packages and its real disk usage in an interactive terminal UI.
+
+![venvscan demo](demo/demo.gif)
+
+```bash
+git clone https://github.com/nitilvijay/venv_console.git && cd venv_console
+cmake -B build && cmake --build build
+./build/venvscan
+```
 
 ---
 
@@ -15,7 +29,7 @@ This tool provides a centralized, fast console interface to give full visibility
 ## Features & Parallel Architecture
 
 - **OpenMP Directory Traversal (`#pragma omp task`)**: Recursively searches the entire home directory tree using task parallelism to locate all `pyvenv.cfg` files within seconds.
-- **Concurrent Environment Processing (`#pragma omp parallel for`)**: Analyzes all discovered environments concurrently. Using dynamic scheduling (`schedule(dynamic)`), worker threads simultaneously inspect package directories, unify package distribution names, and compute disk usage across multiple environments in parallel.
+- **Concurrent Environment Processing (`#pragma omp parallel for`)**: Analyzes all discovered environments concurrently. Using dynamic scheduling (`schedule(dynamic)`), worker threads simultaneously inspect package directories, read package metadata, and compute disk usage across multiple environments in parallel.
 - **Accurate Disk Usage**: Calculates real filesystem block allocations using POSIX `st_blocks` (matching `du -sm` / `du -shm` exact disk usage).
 - **Interactive TUI**: Split-view terminal interface powered by `ncurses` featuring live package filtering, scrollable tables, and disk footprint summaries.
 - **Package Metadata (like `pip list`)**: Reads each `*.dist-info` for the package name and version, sums `RECORD` for per-package size, and normalizes names per PEP 503.
@@ -81,3 +95,8 @@ venvscan -l | grep torch       # plain-text report, pipe-friendly
 | <kbd>PgUp</kbd> / <kbd>PgDn</kbd> | Page up / down |
 | <kbd>/</kbd> | Jump to Package search bar (<kbd>Esc</kbd> or <kbd>Enter</kbd> to exit search) |
 | <kbd>q</kbd> | Quit application |
+---
+
+## License
+
+[MIT](LICENSE)
