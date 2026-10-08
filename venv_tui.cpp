@@ -3,6 +3,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <map>
 #include <set>
 #include <regex>
 #include <algorithm>
@@ -19,13 +20,21 @@ namespace fs = std::filesystem;
 // Data Structures
 // ============================================================
 
+struct PackageInfo
+{
+    string name;            // Display name from METADATA, e.g. "GitPython"
+    string normalized_name; // PEP 503 name, e.g. "gitpython"
+    string version;
+    long long size_bytes;   // Sum of the file sizes listed in RECORD
+};
+
 struct VenvInfo
 {
     string full_path;
     string display_path;
     string python_version;
     long long size_mb;
-    vector<string> packages;
+    vector<PackageInfo> packages;
 };
 
 enum FocusPanel
@@ -35,31 +44,132 @@ enum FocusPanel
 };
 
 // ============================================================
-// Package Name Unification
+// Installed Packages (read from *.dist-info, like `pip list`)
 // ============================================================
 
-set<string> unify_pkg_names(const vector<string> &pkg_list)
+// PEP 503: lowercase, and collapse runs of '-', '_' and '.' into a single '-'
+string normalize_name(const string &name)
 {
-    set<string> unified_list;
-    for (const auto &pkg : pkg_list)
+    string normalized;
+    for (unsigned char c : name)
     {
-        auto dash_pos = pkg.find('-');
-        auto dot_pos = pkg.find('.');
-
-        if (dash_pos != string::npos)
+        if (c == '-' || c == '_' || c == '.')
         {
-            unified_list.insert(pkg.substr(0, dash_pos));
-        }
-        else if (dot_pos != string::npos)
-        {
-            unified_list.insert(pkg.substr(0, dot_pos));
+            if (normalized.empty() || normalized.back() != '-')
+            {
+                normalized.push_back('-');
+            }
         }
         else
         {
-            unified_list.insert(pkg);
+            normalized.push_back(tolower(c));
         }
     }
-    return unified_list;
+    return normalized;
+}
+
+PackageInfo read_dist_info(const fs::path &dist_info)
+{
+    PackageInfo pkg{"", "", "", 0};
+    string line;
+
+    // METADATA headers end at the first blank line
+    ifstream metadata(dist_info / "METADATA");
+    while (getline(metadata, line))
+    {
+        if (!line.empty() && line.back() == '\r')
+        {
+            line.pop_back();
+        }
+        if (line.empty())
+        {
+            break;
+        }
+        if (line.rfind("Name: ", 0) == 0)
+        {
+            pkg.name = line.substr(6);
+        }
+        else if (line.rfind("Version: ", 0) == 0)
+        {
+            pkg.version = line.substr(9);
+        }
+    }
+
+    // Fall back to the folder name: <name>-<version>.dist-info
+    if (pkg.name.empty())
+    {
+        string stem = dist_info.stem().string();
+        size_t dash_pos = stem.find('-');
+        pkg.name = stem.substr(0, dash_pos);
+        if (dash_pos != string::npos)
+        {
+            pkg.version = stem.substr(dash_pos + 1);
+        }
+    }
+    pkg.normalized_name = normalize_name(pkg.name);
+
+    // RECORD is CSV: path,hash,size (size is empty for RECORD itself and .pyc files)
+    ifstream record(dist_info / "RECORD");
+    while (getline(record, line))
+    {
+        size_t comma_pos = line.rfind(',');
+        if (comma_pos == string::npos)
+        {
+            continue;
+        }
+        const char *size_str = line.c_str() + comma_pos + 1;
+        char *end;
+        long long size = strtoll(size_str, &end, 10);
+        if (end != size_str)
+        {
+            pkg.size_bytes += size;
+        }
+    }
+
+    return pkg;
+}
+
+vector<PackageInfo> list_packages(const fs::path &site_packages_path)
+{
+    // Keyed by normalized name: deduplicates and sorts in one go
+    map<string, PackageInfo> packages;
+    try
+    {
+        for (const auto &item : fs::directory_iterator(site_packages_path, fs::directory_options::skip_permission_denied))
+        {
+            if (item.is_directory() && item.path().extension() == ".dist-info")
+            {
+                PackageInfo pkg = read_dist_info(item.path());
+                packages.emplace(pkg.normalized_name, move(pkg));
+            }
+        }
+    }
+    catch (const fs::filesystem_error &)
+    {
+        // Skip if error reading directory
+    }
+
+    vector<PackageInfo> result;
+    for (auto &entry : packages)
+    {
+        result.push_back(move(entry.second));
+    }
+    return result;
+}
+
+string format_size(long long bytes)
+{
+    const char *units[] = {"B", "KB", "MB", "GB"};
+    double size = bytes;
+    int unit = 0;
+    while (size >= 1024 && unit < 3)
+    {
+        size /= 1024;
+        ++unit;
+    }
+    char buf[32];
+    snprintf(buf, sizeof(buf), unit == 0 ? "%.0f %s" : "%.1f %s", size, units[unit]);
+    return buf;
 }
 
 #include <sys/stat.h>
@@ -382,15 +492,15 @@ void run_tui(const vector<VenvInfo> &venvs, long long total_size_mb)
         }
 
         // Filter packages for selected venv
-        vector<string> filtered_pkgs;
+        vector<const PackageInfo *> filtered_pkgs;
         if (!venvs.empty() && selected_env >= 0 && selected_env < (int)venvs.size())
         {
-            string query_lower = to_lower(search_query);
+            string query_normalized = normalize_name(search_query);
             for (const auto &pkg : venvs[selected_env].packages)
             {
-                if (query_lower.empty() || to_lower(pkg).find(query_lower) != string::npos)
+                if (query_normalized.empty() || pkg.normalized_name.find(query_normalized) != string::npos)
                 {
-                    filtered_pkgs.push_back(pkg);
+                    filtered_pkgs.push_back(&pkg);
                 }
             }
         }
@@ -416,16 +526,35 @@ void run_tui(const vector<VenvInfo> &venvs, long long total_size_mb)
             int row_y = 3 + i;
             if (pkg_idx < (int)filtered_pkgs.size())
             {
-                string pkg_name = truncate_string(filtered_pkgs[pkg_idx], right_width - 6);
+                const PackageInfo &pkg = *filtered_pkgs[pkg_idx];
+                // Columns: name | version (12) | size (9); drop version when the panel is narrow
+                int row_w = right_width - 6;
+                bool show_version = row_w - 23 >= 16;
+                int name_col_w = max(1, row_w - (show_version ? 23 : 10));
+                string name = pkg.name.substr(0, name_col_w);
+
+                char row_buf[256];
+                if (show_version)
+                {
+                    snprintf(row_buf, sizeof(row_buf), "%-*s %-12s %9s", name_col_w, name.c_str(),
+                             pkg.version.substr(0, 12).c_str(), format_size(pkg.size_bytes).c_str());
+                }
+                else
+                {
+                    snprintf(row_buf, sizeof(row_buf), "%-*s %9s", name_col_w, name.c_str(),
+                             format_size(pkg.size_bytes).c_str());
+                }
+                string row_text = string(row_buf).substr(0, row_w);
+
                 if (current_focus == FOCUS_PACKAGES && pkg_idx == selected_pkg && !in_search_input)
                 {
                     attron(COLOR_PAIR(2) | A_BOLD);
-                    mvprintw(row_y, right_start_x + 2, " %-*s", right_width - 6, pkg_name.c_str());
+                    mvprintw(row_y, right_start_x + 2, " %-*s", right_width - 6, row_text.c_str());
                     attroff(COLOR_PAIR(2) | A_BOLD);
                 }
                 else
                 {
-                    mvprintw(row_y, right_start_x + 2, " %-*s", right_width - 6, pkg_name.c_str());
+                    mvprintw(row_y, right_start_x + 2, " %-*s", right_width - 6, row_text.c_str());
                 }
             }
         }
@@ -676,25 +805,7 @@ int main()
             fs::path venv_dir = fs::path(venv_path).parent_path();
             fs::path site_packages_path = venv_dir / "lib" / ("python" + py_version_prefix) / "site-packages";
 
-            vector<string> raw_packages;
-            try
-            {
-                if (fs::exists(site_packages_path) && fs::is_directory(site_packages_path))
-                {
-                    for (const auto &item : fs::directory_iterator(site_packages_path, fs::directory_options::skip_permission_denied))
-                    {
-                        raw_packages.push_back(item.path().filename().string());
-                    }
-                }
-            }
-            catch (const fs::filesystem_error &)
-            {
-                // Skip if inaccessible
-            }
-
-            set<string> unified = unify_pkg_names(raw_packages);
-            vector<string> pkg_list(unified.begin(), unified.end());
-            sort(pkg_list.begin(), pkg_list.end());
+            vector<PackageInfo> pkg_list = list_packages(site_packages_path);
 
             long long env_size = get_directory_size_mb(site_packages_path);
 

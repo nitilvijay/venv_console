@@ -43,9 +43,31 @@ Python developers create a venv (`python -m venv`) for almost every project. Ove
 
 **Result on the dev machine:** scan + analysis time went from **~0.65 s to ~0.45 s** (about 30% faster). The same 30 venvs were found, and every size matches `du -sm` exactly (27114 MB total).
 
+### Phase 7: Package metadata from `*.dist-info` (current)
+This works like `pip list`: instead of guessing names from the folders in `site-packages`, the tool reads the metadata pip writes for each installed distribution.
+
+| Change | How |
+| :--- | :--- |
+| Name + version from `.dist-info` | One entry per `*.dist-info` folder. `Name:` and `Version:` come from the `METADATA` header (e.g. `GitPython 3.1.50`). If `METADATA` is missing, they are taken from the folder name. |
+| Size per package from `RECORD` | Adds up the size column of `RECORD` (`path,hash,size`). Shown in the TUI next to each package. |
+| PEP 503 name normalisation | Lowercase, and runs of `-` `_` `.` become `-`. Used to remove duplicates, to sort, and for search (`python_date` finds `python-dateutil`). |
+
+This replaces the old cut-at-`-`-or-`.` heuristic, which mixed import names with distribution names (`git` + `gitpython`, `PIL` + `pillow`) and let through noise like `__pycache__` and `_distutils_hack`.
+
+**Verification:** the package list (names + versions) matches `pip list` exactly for **22 of 23** venvs where pip could run. The one mismatch is `~/brainfuel/.django`: its `bin/python` is a symlink to the system Python, which has since been upgraded to 3.14, so it now has both `lib/python3.13` and `lib/python3.14`. pip reads the 3.14 one, while the tool follows `pyvenv.cfg` to the 3.13 one. The other 7 were skipped because they have no pip or a broken interpreter. Scan time is unchanged (~0.45 s).
+
+**RECORD size vs disk usage (to investigate next):** across all 30 venvs, RECORD adds up to **23998 MB**, apparent file size is **25749 MB** and real disk usage is **27098 MB**, so RECORD covers about 89%. Small venvs (only pip + setuptools) are as low as ~40%. Likely causes:
+- `.pyc` files compiled at install time are listed in RECORD with no size (5010 `.pyc` files, 90 MB in this repo's `.venv`)
+- Disk usage rounds each file up to 4 KB blocks, which adds a lot when there are many small files
+- Files no package owns (`__pycache__` at the top level, `_distutils_hack`)
+- RECORD can also be *larger*: it lists files outside `site-packages` (`bin/`, `share/`) and files that were changed after install
+
 ---
 
 ## Known limitations / next steps
 - Only standard `python -m venv` venvs are supported. uv, virtualenv and Poetry write `version_info = ...`, which the regex skips.
 - The size covers `site-packages` only, not the whole venv directory.
-- Package-name merging is heuristic: it leaves through entries like `__pycache__` and `_distutils_hack`, and import names vs distribution names (`yaml` vs `PyYAML`) show up as separate packages.
+- RECORD-based package sizes don't add up to the venv's disk usage (see above); this needs a decision on how to report it.
+- Only `.dist-info` is read; old `.egg-info` installs (`setup.py install/develop`) are not listed.
+- Venvs with more than one `lib/pythonX.Y` folder (after a base-Python upgrade) only show the folder named in `pyvenv.cfg`.
+- Ideas for later: mark packages the user asked for (`REQUESTED`), `Requires-Dist` dependency graph, import-name mapping from `RECORD`, editable-install tags, views across venvs.

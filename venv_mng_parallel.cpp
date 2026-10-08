@@ -3,6 +3,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <map>
 #include <set>
 #include <regex>
 #include <filesystem>
@@ -12,32 +13,141 @@
 using namespace std;
 namespace fs = std::filesystem;
 
-// ============================================================
-// Unify package names (deduplicate package distributions)
-// ============================================================
-
-set<string> unify_pkg_names(const vector<string> &pkg_list)
+struct PackageInfo
 {
-    set<string> unified_list;
-    for (const auto &pkg : pkg_list)
-    {
-        auto dash_pos = pkg.find('-');
-        auto dot_pos = pkg.find('.');
+    string name;            // Display name from METADATA, e.g. "GitPython"
+    string normalized_name; // PEP 503 name, e.g. "gitpython"
+    string version;
+    long long size_bytes;   // Sum of the file sizes listed in RECORD
+};
 
-        if (dash_pos != string::npos)
+// ============================================================
+// Installed Packages (read from *.dist-info, like `pip list`)
+// ============================================================
+
+// PEP 503: lowercase, and collapse runs of '-', '_' and '.' into a single '-'
+string normalize_name(const string &name)
+{
+    string normalized;
+    for (unsigned char c : name)
+    {
+        if (c == '-' || c == '_' || c == '.')
         {
-            unified_list.insert(pkg.substr(0, dash_pos));
-        }
-        else if (dot_pos != string::npos)
-        {
-            unified_list.insert(pkg.substr(0, dot_pos));
+            if (normalized.empty() || normalized.back() != '-')
+            {
+                normalized.push_back('-');
+            }
         }
         else
         {
-            unified_list.insert(pkg);
+            normalized.push_back(tolower(c));
         }
     }
-    return unified_list;
+    return normalized;
+}
+
+PackageInfo read_dist_info(const fs::path &dist_info)
+{
+    PackageInfo pkg{"", "", "", 0};
+    string line;
+
+    // METADATA headers end at the first blank line
+    ifstream metadata(dist_info / "METADATA");
+    while (getline(metadata, line))
+    {
+        if (!line.empty() && line.back() == '\r')
+        {
+            line.pop_back();
+        }
+        if (line.empty())
+        {
+            break;
+        }
+        if (line.rfind("Name: ", 0) == 0)
+        {
+            pkg.name = line.substr(6);
+        }
+        else if (line.rfind("Version: ", 0) == 0)
+        {
+            pkg.version = line.substr(9);
+        }
+    }
+
+    // Fall back to the folder name: <name>-<version>.dist-info
+    if (pkg.name.empty())
+    {
+        string stem = dist_info.stem().string();
+        size_t dash_pos = stem.find('-');
+        pkg.name = stem.substr(0, dash_pos);
+        if (dash_pos != string::npos)
+        {
+            pkg.version = stem.substr(dash_pos + 1);
+        }
+    }
+    pkg.normalized_name = normalize_name(pkg.name);
+
+    // RECORD is CSV: path,hash,size (size is empty for RECORD itself and .pyc files)
+    ifstream record(dist_info / "RECORD");
+    while (getline(record, line))
+    {
+        size_t comma_pos = line.rfind(',');
+        if (comma_pos == string::npos)
+        {
+            continue;
+        }
+        const char *size_str = line.c_str() + comma_pos + 1;
+        char *end;
+        long long size = strtoll(size_str, &end, 10);
+        if (end != size_str)
+        {
+            pkg.size_bytes += size;
+        }
+    }
+
+    return pkg;
+}
+
+vector<PackageInfo> list_packages(const fs::path &site_packages_path)
+{
+    // Keyed by normalized name: deduplicates and sorts in one go
+    map<string, PackageInfo> packages;
+    try
+    {
+        for (const auto &item : fs::directory_iterator(site_packages_path, fs::directory_options::skip_permission_denied))
+        {
+            if (item.is_directory() && item.path().extension() == ".dist-info")
+            {
+                PackageInfo pkg = read_dist_info(item.path());
+                packages.emplace(pkg.normalized_name, move(pkg));
+            }
+        }
+    }
+    catch (const fs::filesystem_error &)
+    {
+        // Skip if error reading directory
+    }
+
+    vector<PackageInfo> result;
+    for (auto &entry : packages)
+    {
+        result.push_back(move(entry.second));
+    }
+    return result;
+}
+
+string format_size(long long bytes)
+{
+    const char *units[] = {"B", "KB", "MB", "GB"};
+    double size = bytes;
+    int unit = 0;
+    while (size >= 1024 && unit < 3)
+    {
+        size /= 1024;
+        ++unit;
+    }
+    char buf[32];
+    snprintf(buf, sizeof(buf), unit == 0 ? "%.0f %s" : "%.1f %s", size, units[unit]);
+    return buf;
 }
 
 #include <sys/stat.h>
@@ -199,23 +309,7 @@ int main()
             fs::path venv_dir = fs::path(venv_path).parent_path();
             fs::path site_packages_path = venv_dir / "lib" / ("python" + py_version_prefix) / "site-packages";
 
-            vector<string> packages;
-            try
-            {
-                if (fs::exists(site_packages_path) && fs::is_directory(site_packages_path))
-                {
-                    for (const auto &item : fs::directory_iterator(site_packages_path, fs::directory_options::skip_permission_denied))
-                    {
-                        packages.push_back(item.path().filename().string());
-                    }
-                }
-            }
-            catch (const fs::filesystem_error &)
-            {
-                // Skip if error reading directory
-            }
-
-            set<string> unified_packages = unify_pkg_names(packages);
+            vector<PackageInfo> packages = list_packages(site_packages_path);
 
             long long env_size = get_directory_size_mb(site_packages_path);
 
@@ -223,6 +317,10 @@ int main()
             {
                 cout << site_packages_path.string() << endl;
                 cout << "Total size of installed packages and tools: " << env_size << endl;
+                for (const auto &pkg : packages)
+                {
+                    cout << "    " << pkg.name << " " << pkg.version << " (" << format_size(pkg.size_bytes) << ")" << endl;
+                }
             }
 
             total_size += env_size;

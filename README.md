@@ -18,7 +18,7 @@ This tool provides a centralized, fast console interface to give full visibility
 - **Concurrent Environment Processing (`#pragma omp parallel for`)**: Analyzes all discovered environments concurrently. Using dynamic scheduling (`schedule(dynamic)`), worker threads simultaneously inspect package directories, unify package distribution names, and compute disk usage across multiple environments in parallel.
 - **Accurate Disk Usage**: Calculates real filesystem block allocations using POSIX `st_blocks` (matching `du -sm` / `du -shm` exact disk usage).
 - **Interactive TUI**: Split-view terminal interface powered by `ncurses` featuring live package filtering, scrollable tables, and disk footprint summaries.
-- **Package Deduplication**: Intelligently unifies distribution folders (e.g. `django` vs `django-5.0.dist-info`).
+- **Package Metadata (like `pip list`)**: Reads each `*.dist-info` for the package name and version, sums `RECORD` for per-package size, and normalizes names per PEP 503.
 
 ---
 
