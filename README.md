@@ -26,34 +26,48 @@ This tool provides a centralized, fast console interface to give full visibility
 
 On Debian/Ubuntu/Arch/Fedora:
 - `g++` (supporting C++17)
+- `cmake` (3.16+)
 - `OpenMP` (included with GCC)
 - `libncurses` (for the TUI)
 
 ```bash
 # Ubuntu / Debian
-sudo apt install build-essential libncurses-dev
+sudo apt install build-essential cmake libncurses-dev
 
 # Arch Linux
-sudo pacman -S base-devel ncurses
+sudo pacman -S base-devel cmake ncurses
 
 # Fedora
-sudo dnf install gcc-c++ ncurses-devel
+sudo dnf install gcc-c++ cmake ncurses-devel
 ```
 
 ---
 
-## Build & Run
+## Build & Install
 
-### 1. Interactive Terminal UI (TUI)
 ```bash
-g++ -O3 -fopenmp -std=c++17 venv_tui.cpp -lncurses -o venv_tui
-./venv_tui
+cmake -B build
+cmake --build build
+sudo cmake --install build      # installs to /usr/local/bin/venvscan
 ```
 
-### 2. Fast CLI Scanner
+## Usage
+
+```
+venvscan [OPTIONS] [PATH]
+
+  PATH               directory to scan (default: $HOME)
+  -l, --list         print a plain-text report instead of the TUI
+                     (default when output is not a terminal)
+  -j, --threads N    number of threads (default: all cores)
+  -h, --help         show help and exit
+  -V, --version      show version and exit
+```
+
 ```bash
-g++ -O3 -fopenmp -std=c++17 venv_mng_parallel.cpp -o venv_mng_parallel
-./venv_mng_parallel
+venvscan                       # interactive TUI over your home directory
+venvscan ~/projects            # scan one directory
+venvscan -l | grep torch       # plain-text report, pipe-friendly
 ```
 
 ---

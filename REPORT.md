@@ -62,6 +62,19 @@ This replaces the old cut-at-`-`-or-`.` heuristic, which mixed import names with
 - Files no package owns (`__pycache__` at the top level, `_distutils_hack`)
 - RECORD can also be *larger*: it lists files outside `site-packages` (`bin/`, `share/`) and files that were changed after install
 
+### Phase 8: Clean-up and a real CLI (`venvscan`)
+Getting the project ready to publish.
+
+| Change | Details |
+| :--- | :--- |
+| Repo layout | Core code in `src/`; the Python prototypes and `parallel_scan.cpp` moved to `experiments/`; `.gitignore` for build output and `.venv/`. |
+| One binary | The TUI and CLI each had their own copy of the scan code. It's now split into `scanner.cpp` (scan, sizes, packages), `tui.cpp` (ncurses) and `main.cpp` (arguments). |
+| Arguments | `getopt_long` (the POSIX parser `ls`, `grep` and `du` use): `[PATH]`, `-l/--list`, `-j/--threads N`, `-h/--help`, `-V/--version`. Exit codes: 0 success, 1 runtime error, 2 bad arguments. |
+| Auto list mode | When output goes to a pipe or file, the tool prints the plain-text report instead of the TUI (`venvscan \| grep torch`). |
+| Build system | CMake: `find_package` locates OpenMP and ncurses on each platform, the version is defined once in `project()` and passed to `--version`, and `cmake --install` puts the binary in `/usr/local/bin`. |
+
+**Verification:** the `-l` report has the same package lines and the same total as the old CLI (30 venvs, 27114 MB). Thread scaling with `-j`: 1 thread 2.7 s → 4 threads 0.82 s → all cores 0.44 s.
+
 ---
 
 ## Known limitations / next steps

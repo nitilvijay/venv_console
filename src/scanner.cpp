@@ -1,25 +1,20 @@
-#include <iostream>
+#include "scanner.hpp"
+
 #include <fstream>
 #include <sstream>
-#include <string>
-#include <vector>
 #include <map>
 #include <set>
 #include <regex>
+#include <algorithm>
 #include <filesystem>
+#include <cstdio>
 #include <cstdlib>
+#include <cctype>
+#include <sys/stat.h>
 #include <omp.h>
 
 using namespace std;
 namespace fs = std::filesystem;
-
-struct PackageInfo
-{
-    string name;            // Display name from METADATA, e.g. "GitPython"
-    string normalized_name; // PEP 503 name, e.g. "gitpython"
-    string version;
-    long long size_bytes;   // Sum of the file sizes listed in RECORD
-};
 
 // ============================================================
 // Installed Packages (read from *.dist-info, like `pip list`)
@@ -150,10 +145,9 @@ string format_size(long long bytes)
     return buf;
 }
 
-#include <sys/stat.h>
 
 // ============================================================
-// Calculate directory disk usage in Megabytes (MB) matching `du -sm`
+// Native Directory Size Calculation (Matching `du -sm`)
 // ============================================================
 
 long long get_directory_size_mb(const fs::path &dir_path)
@@ -198,7 +192,7 @@ long long get_directory_size_mb(const fs::path &dir_path)
 }
 
 // ============================================================
-// Task-parallel directory scan to find pyvenv.cfg files
+// Parallel Directory Scan (OpenMP Tasks)
 // ============================================================
 
 void scan_parallel(const string &path, vector<string> &venv_paths)
@@ -252,31 +246,22 @@ void scan_parallel(const string &path, vector<string> &venv_paths)
 }
 
 // ============================================================
-// Main
+// Full Scan: find venvs, then analyse them in parallel
 // ============================================================
 
-int main()
+vector<VenvInfo> scan_venvs(const string &root, const string &home_dir, long long &total_size_mb)
 {
-    const char *home_env = getenv("HOME");
-    if (!home_env)
-    {
-        cerr << "Error: HOME environment variable not found." << endl;
-        return 1;
-    }
-    string home_dir = home_env;
-
     vector<string> venv_paths;
 
     #pragma omp parallel
     {
         #pragma omp single
         {
-            scan_parallel(home_dir, venv_paths);
+            scan_parallel(root, venv_paths);
         }
     }
 
-    cout << "Virtual environments found:" << endl;
-
+    vector<VenvInfo> venvs(venv_paths.size());
     long long total_size = 0;
     const regex version_regex(R"(version = (\d+\.\d+\.\d+))");
 
@@ -309,25 +294,43 @@ int main()
             fs::path venv_dir = fs::path(venv_path).parent_path();
             fs::path site_packages_path = venv_dir / "lib" / ("python" + py_version_prefix) / "site-packages";
 
-            vector<PackageInfo> packages = list_packages(site_packages_path);
+            vector<PackageInfo> pkg_list = list_packages(site_packages_path);
 
             long long env_size = get_directory_size_mb(site_packages_path);
 
-            #pragma omp critical
+            string display_path = venv_dir.string();
+            if (!home_dir.empty() && display_path.rfind(home_dir, 0) == 0)
             {
-                cout << site_packages_path.string() << endl;
-                cout << "Total size of installed packages and tools: " << env_size << endl;
-                for (const auto &pkg : packages)
-                {
-                    cout << "    " << pkg.name << " " << pkg.version << " (" << format_size(pkg.size_bytes) << ")" << endl;
-                }
+                display_path = "~" + display_path.substr(home_dir.length());
             }
+
+            venvs[i] = {
+                venv_dir.string(),
+                display_path,
+                full_ver,
+                env_size,
+                pkg_list
+            };
 
             total_size += env_size;
         }
     }
 
-    cout << "Total size of all virtual environments: " << total_size << " MB" << endl;
+    // Filter out invalid/empty entries if any
+    vector<VenvInfo> valid_venvs;
+    for (auto &v : venvs)
+    {
+        if (!v.display_path.empty())
+        {
+            valid_venvs.push_back(move(v));
+        }
+    }
 
-    return 0;
+    // Sort by size descending (largest virtual environments first)
+    sort(valid_venvs.begin(), valid_venvs.end(), [](const VenvInfo &a, const VenvInfo &b) {
+        return a.size_mb > b.size_mb;
+    });
+
+    total_size_mb = total_size;
+    return valid_venvs;
 }
