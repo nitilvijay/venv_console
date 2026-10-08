@@ -1,6 +1,7 @@
 import subprocess as sp
 import os
 import re
+import time
 
 def unify_pkg_names(pkg_list):
     unified_list = set()
@@ -15,6 +16,12 @@ def unify_pkg_names(pkg_list):
 
 #Finding all pyenv.cfg files in the home directory and its subdirectories
 #It gives path
+
+#Measure time to find all pyenv.cfg files
+
+
+start_time = time.time()
+
 result = sp.run(
     ["find", os.path.expanduser("~"), "-type", "f", "-name", "pyvenv.cfg"],
     stdout=sp.PIPE,
@@ -25,6 +32,8 @@ result = sp.run(
 l = result.stdout.split("\n")
 l.pop()
 
+end_time = time.time()
+print(f"Time taken to find all pyenv.cfg files: {end_time - start_time:.2f} seconds")
 
 print("Virtual environments found:")
 # for venv_path, path in enumerate(l):
@@ -66,7 +75,6 @@ for venv_path in l:
         size = sp.run(["du","-shm", site_packages_path], stdout=sp.PIPE, stderr=sp.DEVNULL, text=True)
         print("Total size of installed packages and tools: ",size.stdout.split("\t")[0])
         total_size += int(size.stdout.split("\t")[0])
-        break
     f.close()
 
 print(f"Total size of all virtual environments: {total_size} MB")

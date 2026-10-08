@@ -71,28 +71,39 @@ set<string> unify_pkg_names(const vector<string> &pkg_list)
 long long get_directory_size_mb(const fs::path &dir_path)
 {
     long long total_512_blocks = 0;
+
+    // Hard-linked files share one inode; count each inode once, like du does
+    set<pair<dev_t, ino_t>> seen_inodes;
+    auto add_blocks = [&](const char *p) {
+        struct stat st;
+        if (lstat(p, &st) != 0)
+        {
+            return;
+        }
+        if (!S_ISDIR(st.st_mode) && st.st_nlink > 1 &&
+            !seen_inodes.insert({st.st_dev, st.st_ino}).second)
+        {
+            return;
+        }
+        total_512_blocks += st.st_blocks;
+    };
+
     try
     {
         if (fs::exists(dir_path) && fs::is_directory(dir_path))
         {
-            struct stat st;
-            if (lstat(dir_path.c_str(), &st) == 0)
-            {
-                total_512_blocks += st.st_blocks;
-            }
+            add_blocks(dir_path.c_str());
 
+            // recursive_directory_iterator does not follow directory symlinks by default
             for (const auto &entry : fs::recursive_directory_iterator(dir_path, fs::directory_options::skip_permission_denied))
             {
-                if (lstat(entry.path().c_str(), &st) == 0)
-                {
-                    total_512_blocks += st.st_blocks;
-                }
+                add_blocks(entry.path().c_str());
             }
         }
     }
     catch (const fs::filesystem_error &)
     {
-        // Skip inaccessible paths
+        // Skip inaccessible files or directories
     }
     // Convert 512-byte filesystem blocks to MB (rounding up like du -sm / du -shm)
     return (total_512_blocks * 512 + 1024 * 1024 - 1) / (1024 * 1024);
@@ -104,35 +115,52 @@ long long get_directory_size_mb(const fs::path &dir_path)
 
 void scan_parallel(const string &path, vector<string> &venv_paths)
 {
+    vector<string> subfolders;
+    bool is_venv = false;
+
     try
     {
         for (const auto &entry : fs::directory_iterator(path, fs::directory_options::skip_permission_denied))
         {
+            // Never follow symlinks: avoids loops and counting the same venv twice
+            if (entry.is_symlink())
+            {
+                continue;
+            }
+
             if (entry.is_directory())
             {
-                string subfolder = entry.path().string();
-
-                #pragma omp task firstprivate(subfolder) shared(venv_paths)
-                scan_parallel(subfolder, venv_paths);
+                subfolders.push_back(entry.path().string());
             }
-            else if (entry.is_regular_file())
+            else if (entry.is_regular_file() && entry.path().filename() == "pyvenv.cfg")
             {
-                if (entry.path().filename() == "pyvenv.cfg")
-                {
-                    #pragma omp critical
-                    {
-                        venv_paths.push_back(entry.path().string());
-                    }
-                }
+                is_venv = true;
             }
         }
-
-        #pragma omp taskwait
     }
     catch (const fs::filesystem_error &)
     {
         // Skip inaccessible folders
     }
+
+    // This directory is a venv: record it and don't descend into it
+    if (is_venv)
+    {
+        #pragma omp critical
+        {
+            venv_paths.push_back((fs::path(path) / "pyvenv.cfg").string());
+        }
+        return;
+    }
+
+    for (string subfolder : subfolders)
+    {
+        #pragma omp task firstprivate(subfolder) shared(venv_paths)
+        scan_parallel(subfolder, venv_paths);
+    }
+
+    // No taskwait: the implicit barrier at the end of the parallel region
+    // waits for all tasks, so parents don't block on their children
 }
 
 // ============================================================
